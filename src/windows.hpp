@@ -27,3 +27,4 @@ extern bool linuxNative;
 void windowsSetup();
 void linuxCheckInputs();
 void linuxHeartbeat();
+void linuxResetKeyState();

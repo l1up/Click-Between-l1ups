@@ -72,6 +72,9 @@ void buildStepQueue(int stepCount) {
 		firstFrame = false;
 		lastFrameTime = currentFrameTime;
 		inputVector.clear();
+		#ifdef GEODE_IS_WINDOWS
+		linuxResetKeyState(); // forget held keys / held-back releases (events may have been dropped while paused)
+		#endif
 		return;
 	}
 
@@ -737,6 +740,11 @@ $on_mod(Loaded) {
 	});
 
 #ifdef GEODE_IS_WINDOWS
+	socdFix = Mod::get()->getSettingValue<bool>("socd-fix");
+	listenForSettingChanges<bool>("socd-fix", +[](bool enable) {
+		socdFix = enable;
+	});
+
 	(void) Mod::get()->hook(
 		reinterpret_cast<void*>(geode::base::get() + 0x71ef0),
 		Slerp2D,

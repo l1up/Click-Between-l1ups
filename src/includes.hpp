@@ -36,3 +36,4 @@ extern std::unordered_set<uint16_t> heldInputs;
 
 extern bool enableRightClick;
 extern bool softToggle; // true -> cbf disabled
+extern bool socdFix; // true -> merge SOCD release/press pairs (Linux keyboard path)

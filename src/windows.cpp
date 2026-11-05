@@ -39,6 +39,37 @@ class $modify(CreatorLayer) {
 	}
 };
 
+// ---- SOCD compatibility (Linux/Wine keyboard path) ----
+// Keyboards with SOCD cleaning ("last input priority") answer "press key2 while key1 is held" with
+// "release key1" + "press key2" (in either order, within ~1ms). Vanilla GD collapses those into one frame,
+// but CBF replays every event with its own timestamp, so the release really lets go of the button.
+// Fix: (1) only report a press/release when the *action* (not the key) changes state, and
+// (2) hold back a release for a moment; if a press of the same action arrives inside the window, drop both.
+bool socdFix = false;
+constexpr double SOCD_WINDOW = 0.002; // seconds
+
+struct PendingRelease {
+	bool active = false;
+	PlayerButtonCommand cmd;
+};
+static std::array<std::unordered_set<USHORT>, 6> heldKeys;   // physical keys currently down, per action
+static std::array<PendingRelease, 6> pendingReleases;
+
+void linuxResetKeyState() {
+	for (auto& s : heldKeys) s.clear();
+	for (auto& p : pendingReleases) p.active = false;
+}
+
+// emit held-back releases that are older than SOCD_WINDOW relative to `now`
+static void flushPendingReleases(double now) {
+	for (auto& p : pendingReleases) {
+		if (p.active && p.cmd.m_timestamp + SOCD_WINDOW < now) {
+			inputVector.emplace_back(p.cmd);
+			p.active = false;
+		}
+	}
+}
+
 void linuxHeartbeat() {
 	if (pSharedMem) pSharedMem->heartbeat++;
 }
@@ -84,15 +115,48 @@ void linuxCheckInputs() {
 			break;
 		case KEYBOARD: {
 			USHORT keyCode = MapVirtualKeyExA(scanCode, MAPVK_VSC_TO_VK, GetKeyboardLayout(0));
-			if (inputBinds[p1Jump].contains(keyCode)) input.m_button = PlayerButton::Jump;
-			else if (inputBinds[p1Left].contains(keyCode)) input.m_button = PlayerButton::Left;
-			else if (inputBinds[p1Right].contains(keyCode)) input.m_button = PlayerButton::Right;
-			else {
-				player1 = false;
-				if (inputBinds[p2Jump].contains(keyCode)) input.m_button = PlayerButton::Jump;
-				else if (inputBinds[p2Left].contains(keyCode)) input.m_button = PlayerButton::Left;
-				else if (inputBinds[p2Right].contains(keyCode)) input.m_button = PlayerButton::Right;
-				else continue;
+			GameAction action;
+			if (inputBinds[p1Jump].contains(keyCode)) action = p1Jump;
+			else if (inputBinds[p1Left].contains(keyCode)) action = p1Left;
+			else if (inputBinds[p1Right].contains(keyCode)) action = p1Right;
+			else if (inputBinds[p2Jump].contains(keyCode)) action = p2Jump;
+			else if (inputBinds[p2Left].contains(keyCode)) action = p2Left;
+			else if (inputBinds[p2Right].contains(keyCode)) action = p2Right;
+			else continue;
+
+			player1 = action <= p1Right;
+			if (action == p1Jump || action == p2Jump) input.m_button = PlayerButton::Jump;
+			else if (action == p1Left || action == p2Left) input.m_button = PlayerButton::Left;
+			else input.m_button = PlayerButton::Right;
+
+			if (socdFix) {
+				double evTime = (double)ev.time.QuadPart / (double)freq.QuadPart;
+				flushPendingReleases(evTime); // anything older than the window was a real release
+
+				auto& held = heldKeys[action];
+				auto& pending = pendingReleases[action];
+
+				if (value == Press) {
+					bool wasDown = !held.empty();
+					held.insert(keyCode);
+					if (pending.active) { // release + press back to back: the action never really went up
+						pending.active = false;
+						continue;
+					}
+					if (wasDown) continue; // another key already holds this action down
+				}
+				else {
+					held.erase(keyCode);
+					if (!held.empty()) continue; // another key still holds this action down
+
+					// last key of this action released: hold it back briefly in case a press follows
+					input.m_isPush = false;
+					input.m_timestamp = evTime;
+					input.m_isPlayer2 = !player1;
+					pending.active = true;
+					pending.cmd = input;
+					continue;
+				}
 			}
 			break;
 		}
@@ -205,6 +269,8 @@ void linuxCheckInputs() {
 
 		inputVector.emplace_back(input);
 	}
+
+	if (socdFix) flushPendingReleases(getCurrentTimestamp());
 
 	pSharedMem->tail = t;
 }
