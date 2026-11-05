@@ -2,10 +2,12 @@
 
 Normal CBF breaks SOCD Last Input Priority (also known as Snappy Tappy); this fork not only adds SOCD compatibility but it also fixes the interaction SOCD had with vanilla GD, which added some weird type of swift clicks that let you, for example, control the swing like a ship. (this fork fixes that)
 
+To install this fork your gotta download it from the releases tab, but if you want to fork it i recomment using Github Actions if your own builds dont work.
 
+## Normal CBF README:
 
-# Normal CBF README:
 ---
+
 # Installation
 
 Install [Geode](https://geode-sdk.org/install/), then install this mod from the Geode index.
