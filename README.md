@@ -4,7 +4,13 @@ Normal CBF breaks SOCD Last Input Priority (also known as Snappy Tappy); this fo
 
 To install this fork your gotta download it from the releases tab, but if you want to fork it i recomment using Github Actions if your own builds dont work.
 
-## Normal CBF README:
+### Original Features:
+- Enable SOCD compatibility.
+- Remove SOCD exploit that let you do some weird swift click stuff and other shenaniganz (good thing).
+- Fix CBF Input handling DYING when getting a big lagspike or freeze.
+- Added a CBF Toggle Checkmark on the pause menu because, as this being a fork, mod menus cbf toggles dont work.
+
+### Normal CBF README:
 
 ---
 
