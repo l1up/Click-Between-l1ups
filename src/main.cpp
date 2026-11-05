@@ -1,3 +1,4 @@
+#include <Geode/modify/PauseLayer.hpp>
 #include "Geode/loader/Log.hpp"
 #include "includes.hpp"
 
@@ -706,6 +707,45 @@ void toggleMod(bool disable) {
 		}
 	}
 }
+
+/*
+checkbox on the pause menu to toggle CBF
+*/
+class $modify(CBFPauseLayer, PauseLayer) {
+	void customSetup() {
+		PauseLayer::customSetup();
+
+		auto winSize = CCDirector::sharedDirector()->getWinSize();
+
+		auto menu = CCMenu::create();
+		menu->setID("cbf-menu"_spr);
+		menu->setPosition({ 0.f, 0.f });
+
+		auto toggler = CCMenuItemToggler::createWithStandardSprites(
+			this, menu_selector(CBFPauseLayer::onToggleCBF), 0.6f
+		);
+		toggler->setID("cbf-toggler"_spr);
+		toggler->setPosition({ 30.f, 30.f });
+		toggler->toggle(!softToggle); // checked = CBF enabled
+		menu->addChild(toggler);
+
+		auto label = CCLabelBMFont::create("CBF", "bigFont.fnt");
+		label->setScale(0.45f);
+		label->setAnchorPoint({ 0.f, 0.5f });
+		label->setPosition({ 50.f, 30.f });
+		menu->addChild(label);
+
+		this->addChild(menu);
+	}
+
+	void onToggleCBF(CCObject* sender) {
+		// the toggler's state hasn't flipped yet while its callback runs, so invert it
+		bool enable = !static_cast<CCMenuItemToggler*>(sender)->isToggled();
+		// soft-toggle is "disable CBF", and setting it fires toggleMod() through the listener in $on_mod
+		Mod::get()->setSettingValue<bool>("soft-toggle", !enable);
+	}
+};
+
 
 $on_mod(Loaded) {
 	Mod::get()->setSavedValue<bool>("is-linux", false);
