@@ -47,7 +47,10 @@ struct __attribute__((packed)) SharedMemory {
 };
 
 constexpr int MAX_EVENTS = 10;
-constexpr int WATCHDOG_TIMEOUT_SECS = 5;
+// GD can legitimately stop ticking the heartbeat for a long time (level load, lag spike, freeze).
+// Only give up after a long silence; the mod also restarts this program if it ever exits (error_flag == EXITED).
+constexpr int WATCHDOG_TIMEOUT_SECS = 30;
+constexpr uint32_t ERROR_FLAG_EXITED = 4;
 
 #define INOTIFY_EVENT_SIZE  ( sizeof (struct inotify_event) )
 #define INOTIFY_BUF_LEN     ( 1024 * ( INOTIFY_EVENT_SIZE + 16 ) )
@@ -367,6 +370,7 @@ int main(int argc, char* argv[]) {
     close(epoll_fd);
     inotify_rm_watch(inotify_fd, inotify_watch);
     close(inotify_fd);
+    shm->error_flag = ERROR_FLAG_EXITED; // tell the mod it should start a new instance of this program
     munmap(shm, sizeof(SharedMemory));
     unlink(shm_path.c_str());
 

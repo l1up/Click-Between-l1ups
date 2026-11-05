@@ -70,8 +70,26 @@ static void flushPendingReleases(double now) {
 	}
 }
 
+constexpr uint32_t ERROR_FLAG_EXITED = 4; // set by linux-input when it quits (watchdog, signal, read error)
+
+static bool startLinuxHelper();
+
 void linuxHeartbeat() {
-	if (pSharedMem) pSharedMem->heartbeat++;
+	if (!pSharedMem) return;
+	pSharedMem->heartbeat++;
+
+	// the helper quit on its own (e.g. GD froze for a long time): start a new one, at most once per second
+	if (pSharedMem->error_flag == ERROR_FLAG_EXITED) {
+		static ULONGLONG lastAttempt = 0;
+		ULONGLONG now = GetTickCount64();
+		if (now - lastAttempt < 1000) return;
+		lastAttempt = now;
+
+		log::warn("linux-input exited, restarting it");
+		linuxResetKeyState();
+		heldInputs.clear();
+		startLinuxHelper();
+	}
 }
 
 void linuxCheckInputs() {
@@ -275,6 +293,98 @@ void linuxCheckInputs() {
 	pSharedMem->tail = t;
 }
 
+// (re)create the shared memory and launch linux-input. Returns false (and disables the Linux path) on failure.
+static bool startLinuxHelper() {
+	// drop the previous instance's mapping, if any (and use the same lambda on every failure below)
+	auto cleanup = [] {
+		if (pSharedMem) { UnmapViewOfFile(pSharedMem); pSharedMem = nullptr; }
+		if (hShmMapping) { CloseHandle(hShmMapping); hShmMapping = NULL; }
+		if (hShmFile && hShmFile != INVALID_HANDLE_VALUE) { CloseHandle(hShmFile); }
+		hShmFile = NULL;
+	};
+
+	cleanup();
+
+	static int generation = 0;
+	std::string shmName = "cbf-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(generation++);
+	std::string winShmPath = std::string("Z:\\dev\\shm\\") + shmName;
+	std::string unixShmPath = std::string("/dev/shm/") + shmName;
+
+	hShmFile = CreateFile(winShmPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hShmFile == INVALID_HANDLE_VALUE) {
+		log::error("Failed to create shared memory file: {}", GetLastError());
+		cleanup();
+		return false;
+	}
+
+	LARGE_INTEGER fileSize;
+	fileSize.QuadPart = sizeof(SharedMemory);
+	SetFilePointerEx(hShmFile, fileSize, NULL, FILE_BEGIN);
+	SetEndOfFile(hShmFile);
+
+	hShmMapping = CreateFileMapping(hShmFile, NULL, PAGE_READWRITE, 0, sizeof(SharedMemory), NULL);
+	if (!hShmMapping) {
+		log::error("Failed to create file mapping: {}", GetLastError());
+		cleanup();
+		return false;
+	}
+
+	pSharedMem = static_cast<SharedMemory*>(
+		MapViewOfFile(hShmMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMemory)));
+	if (!pSharedMem) {
+		log::error("Failed to map view: {}", GetLastError());
+		cleanup();
+		return false;
+	}
+
+	ZeroMemory(pSharedMem, sizeof(SharedMemory));
+
+	std::string path = CCFileUtils::get()->fullPathForFilename("linux-input.so"_spr, true);
+
+	typedef char* (CDECL *wine_get_unix_file_name_t)(LPCWSTR);
+	auto wgufn = (wine_get_unix_file_name_t)GetProcAddress(
+		GetModuleHandle("kernel32.dll"), "wine_get_unix_file_name");
+
+	std::string unixBinPath;
+	if (wgufn) {
+		int wlen = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, NULL, 0);
+		std::vector<wchar_t> wpath(wlen);
+		MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, wpath.data(), wlen);
+		char* ubp = wgufn(wpath.data());
+		if (ubp) {
+			unixBinPath = ubp;
+			HeapFree(GetProcessHeap(), 0, ubp);
+		}
+	}
+
+	if (unixBinPath.empty()) {
+		log::error("Failed to resolve Unix path for linux-input binary");
+		cleanup();
+		return false;
+	}
+
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+	ZeroMemory(&pi, sizeof(pi));
+
+	std::string cmdline = std::string("/bin/sh -c \"chmod +x '") + unixBinPath
+		+ "' && exec '" + unixBinPath + "' '" + unixShmPath + "'\"";
+
+	if (!CreateProcess("Z:\\bin\\sh", (LPSTR)cmdline.c_str(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+		log::error("Failed to launch Linux input program: {}", GetLastError());
+		cleanup();
+		return false;
+	}
+
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+
+	return true;
+}
+
 void windowsSetup() {
 	QueryPerformanceFrequency(&freq);
 
@@ -294,87 +404,7 @@ void windowsSetup() {
 			linuxNative = true;
 			log::info("Linux native");
 
-			std::string shmName = "cbf-" + std::to_string(GetCurrentProcessId());
-			std::string winShmPath = std::string("Z:\\dev\\shm\\") + shmName;
-			std::string unixShmPath = std::string("/dev/shm/") + shmName;
-
-			hShmFile = CreateFile(winShmPath.c_str(), GENERIC_READ | GENERIC_WRITE,
-				FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (hShmFile == INVALID_HANDLE_VALUE) {
-				log::error("Failed to create shared memory file: {}", GetLastError());
-				return;
-			}
-
-			LARGE_INTEGER fileSize;
-			fileSize.QuadPart = sizeof(SharedMemory);
-			SetFilePointerEx(hShmFile, fileSize, NULL, FILE_BEGIN);
-			SetEndOfFile(hShmFile);
-
-			hShmMapping = CreateFileMapping(hShmFile, NULL, PAGE_READWRITE, 0, sizeof(SharedMemory), NULL);
-			if (!hShmMapping) {
-				log::error("Failed to create file mapping: {}", GetLastError());
-				CloseHandle(hShmFile);
-				return;
-			}
-
-			pSharedMem = static_cast<SharedMemory*>(
-				MapViewOfFile(hShmMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMemory)));
-			if (!pSharedMem) {
-				log::error("Failed to map view: {}", GetLastError());
-				CloseHandle(hShmMapping);
-				CloseHandle(hShmFile);
-				return;
-			}
-
-			ZeroMemory(pSharedMem, sizeof(SharedMemory));
-
-			std::string path = CCFileUtils::get()->fullPathForFilename("linux-input.so"_spr, true);
-
-			typedef char* (CDECL *wine_get_unix_file_name_t)(LPCWSTR);
-			auto wgufn = (wine_get_unix_file_name_t)GetProcAddress(
-				GetModuleHandle("kernel32.dll"), "wine_get_unix_file_name");
-
-			std::string unixBinPath;
-			if (wgufn) {
-				int wlen = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, NULL, 0);
-				std::vector<wchar_t> wpath(wlen);
-				MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, wpath.data(), wlen);
-				char* ubp = wgufn(wpath.data());
-				if (ubp) {
-					unixBinPath = ubp;
-					HeapFree(GetProcessHeap(), 0, ubp);
-				}
-			}
-
-			if (unixBinPath.empty()) {
-				log::error("Failed to resolve Unix path for linux-input binary");
-				UnmapViewOfFile(pSharedMem);
-				CloseHandle(hShmMapping);
-				CloseHandle(hShmFile);
-				pSharedMem = nullptr;
-				return;
-			}
-
-			STARTUPINFO si;
-			PROCESS_INFORMATION pi;
-			ZeroMemory(&si, sizeof(si));
-			si.cb = sizeof(si);
-			ZeroMemory(&pi, sizeof(pi));
-
-			std::string cmdline = std::string("/bin/sh -c \"chmod +x '") + unixBinPath
-				+ "' && exec '" + unixBinPath + "' '" + unixShmPath + "'\"";
-
-			if (!CreateProcess("Z:\\bin\\sh", (LPSTR)cmdline.c_str(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-				log::error("Failed to launch Linux input program: {}", GetLastError());
-				UnmapViewOfFile(pSharedMem);
-				CloseHandle(hShmMapping);
-				CloseHandle(hShmFile);
-				pSharedMem = nullptr;
-				return;
-			}
-
-			CloseHandle(pi.hProcess);
-			CloseHandle(pi.hThread);
+			startLinuxHelper();
 		}
 	}
 }
