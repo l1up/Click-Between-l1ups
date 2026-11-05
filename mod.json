@@ -99,7 +99,7 @@
 			"name": "SOCD Compatibility",
 			"description": "Fixes lost clicks on keyboards with SOCD cleaning (e.g. last-input-priority) when two keys are bound to the same action. Holds back key releases for ~2ms and ignores a release that is immediately followed by a press of the same action.",
 			"type": "bool",
-			"default": false,
+			"default": true,
 			"enable-if": "saved:you-must-be-on-linux-to-change-this && wine-workaround",
 			"platforms": ["win"]
 		},
