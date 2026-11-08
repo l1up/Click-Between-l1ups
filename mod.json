@@ -82,6 +82,14 @@
 			"default": "2.2",
 			"platforms": ["win"]
 		},
+		"speedhack-compat": {
+			"name": "Speedhack Compatibility",
+			"description": "Physics Bypass ignores speedhacks (the game slows down but the physics don't). With this on, Physics Bypass switches itself off while a speedhack is detected, and back on when it's gone.",
+			"type": "bool",
+			"default": true,
+			"enable-if": "physics-bypass",
+			"platforms": ["win"]
+		},
 		"linux-category": {
 			"name": "Linux",
 			"type": "title",
