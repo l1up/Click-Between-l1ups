@@ -9,6 +9,7 @@ To install this fork your gotta download it from the releases tab, but if you wa
 - Remove SOCD exploit that let you do some weird swift click stuff and other shenaniganz (good thing).
 - Fix CBF Input handling DYING when getting a big lagspike or freeze.
 - Added a CBF Toggle Checkmark on the pause menu because, as this being a fork, mod menus cbf toggles dont work.
+- Speedhack Physics Bypass compatibility toggle (disables physics bypass while speedhack is enabled).
 
 ### Normal CBF README:
 
