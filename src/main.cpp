@@ -1,4 +1,3 @@
-#include <Geode/modify/PauseLayer.hpp>
 #include "Geode/loader/Log.hpp"
 #include "includes.hpp"
 
@@ -10,6 +9,7 @@
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/GJGameLevel.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <tulip/TulipHook.hpp>
 
 constexpr double SMALLEST_FLOAT = std::numeric_limits<float>::min();
@@ -197,10 +197,22 @@ bool physicsBypass;
 bool legacyBypass;
 
 /*
+speedhack mods (Megahack etc.) work by scaling the scheduler's time scale.
+Physics bypass replaces the game's delta with real elapsed time, so it has to re-apply that scale
+or the game ignores the speedhack.
+*/
+double getSpeedScale() {
+	CCScheduler* scheduler = CCDirector::sharedDirector()->getScheduler();
+	if (!scheduler) return 1.0;
+	float scale = scheduler->getTimeScale();
+	return scale > 0.0f ? scale : 1.0;
+}
+
+/*
 determine the number of physics steps that happen on each frame,
 need to rewrite the vanilla formula bc otherwise you'd have to use inline assembly to get the step count
 */
-int calculateStepCount(double delta, float timewarp, bool forceVanilla) {
+int calculateStepCount(double delta, float timewarp, bool forceVanilla, double speed = 1.0) {
 	if (!physicsBypass || forceVanilla) { // vanilla 2.2
 		return std::round(std::max(1.0, ((delta * 60.0) / std::min(1.0f, timewarp)) * 4.0)); // not sure if this is different from `(delta * 240) / timewarp` bc of float precision
 	}
@@ -208,7 +220,7 @@ int calculateStepCount(double delta, float timewarp, bool forceVanilla) {
 		return std::round(std::max(4.0, delta * 240.0) / std::min(1.0f, timewarp));
 	}
 	else { // sorta just 2.2 + physics bypass but it doesnt allow below 240 steps/sec, also it smooths things out a bit when lagging
-		double animationInterval = CCDirector::sharedDirector()->getAnimationInterval();
+		double animationInterval = CCDirector::sharedDirector()->getAnimationInterval() * speed; // length of one frame in game time
 		averageDelta = (0.05 * delta) + (0.95 * averageDelta); // exponential moving average to detect lag/external fps caps
 		if (averageDelta > animationInterval * 10) averageDelta = animationInterval * 10; // dont let averageDelta get too high
 
@@ -336,12 +348,20 @@ class $modify(GJBaseGameLayer) {
 		PlayLayer* pl = PlayLayer::get();
 		if (pl) {
 			const float timewarp = pl->m_gameState.m_timeWarp;
-			if (physicsBypass) {
-				if (softToggle) modifiedDelta = CCDirector::sharedDirector()->getActualDeltaTime() * timewarp;
-				else if (!firstFrame) modifiedDelta = (currentFrameTime - lastFrameTime) * timewarp;
+			const double speed = getSpeedScale();
+
+			static double lastSpeed = 1.0;
+			if (speed != lastSpeed) { // for debugging speedhack issues
+				log::info("Speedhack scale: {}", speed);
+				lastSpeed = speed;
 			}
 
-			stepCount = calculateStepCount(modifiedDelta, timewarp, false);
+			if (physicsBypass) {
+				if (softToggle) modifiedDelta = CCDirector::sharedDirector()->getActualDeltaTime() * timewarp * speed;
+				else if (!firstFrame) modifiedDelta = (currentFrameTime - lastFrameTime) * timewarp * speed;
+			}
+
+			stepCount = calculateStepCount(modifiedDelta, timewarp, false, speed);
 
 			if (pl->m_playerDied || GameManager::sharedState()->getEditorLayer() || softToggle) {
 				skipUpdate = true;
@@ -715,8 +735,6 @@ class $modify(CBFPauseLayer, PauseLayer) {
 	void customSetup() {
 		PauseLayer::customSetup();
 
-		auto winSize = CCDirector::sharedDirector()->getWinSize();
-
 		auto menu = CCMenu::create();
 		menu->setID("cbf-menu"_spr);
 		menu->setPosition({ 0.f, 0.f });
@@ -745,7 +763,6 @@ class $modify(CBFPauseLayer, PauseLayer) {
 		Mod::get()->setSettingValue<bool>("soft-toggle", !enable);
 	}
 };
-
 
 $on_mod(Loaded) {
 	Mod::get()->setSavedValue<bool>("is-linux", false);
