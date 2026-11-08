@@ -6,13 +6,14 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v1.5.0",
+	"version": "v1.3.0",
 	"id": "l1up.click_between_l1ups",
 	"name": "Click Between l1ups",
 	"developer": "l1up",
 	"description": "Allows inputs to register between frames.",
 	"incompatibilities": {
-		"zmx.cbf-lite": ">=1.0.0"
+		"zmx.cbf-lite": ">=1.0.0",
+		"syzzi.click_between_frames": ">=1.0.0"
 	},
 	"tags": [
 		"performance",
