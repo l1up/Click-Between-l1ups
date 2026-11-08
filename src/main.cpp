@@ -3,6 +3,7 @@
 
 #include <limits>
 #include <math.h>
+#include <cmath>
 
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
@@ -193,26 +194,66 @@ void decomp_resetCollisionLog(PlayerObject* p) {
 
 double averageDelta = 0.0;
 
-bool physicsBypass;
+bool physicsBypass;  // physics bypass is currently active
 bool legacyBypass;
+bool pbWanted = false;     // what the "Enable Physics Bypass" setting says
+bool pbSuspended = false;  // true while physics bypass is switched off because a speedhack was detected
+
+void togglePhysicsBypass(bool enable);
 
 /*
-speedhack mods (Megahack etc.) work by scaling the scheduler's time scale.
-Physics bypass replaces the game's delta with real elapsed time, so it has to re-apply that scale
-or the game ignores the speedhack.
+Physics bypass replaces the game's delta with the real time between frames, which throws away the speed set by
+speedhacks (Megahack etc.): the game slows down but the physics don't. Vanilla physics follow the speedhack,
+so when a speedhack is detected, physics bypass is switched off, and switched back on once it's gone.
+
+Detection: over short windows, compare the delta the game computed (vanilla) with the real time between frames.
+They only disagree when something scales the game's time. Needs a few consistent windows to switch,
+so single lag spikes don't trigger it.
 */
-double getSpeedScale() {
-	CCScheduler* scheduler = CCDirector::sharedDirector()->getScheduler();
-	if (!scheduler) return 1.0;
-	float scale = scheduler->getTimeScale();
-	return scale > 0.0f ? scale : 1.0;
+void updateSpeedhackDetector(double raw, double vanilla, double real, float timewarp) {
+	if (!pbWanted || real <= 0.0) return;
+
+	static double sumRaw = 0.0, sumVanilla = 0.0, sumReal = 0.0, sumRealWarped = 0.0;
+	sumRaw += raw > 0.0 ? raw : real;
+	sumVanilla += vanilla;
+	sumReal += real;
+	sumRealWarped += real * timewarp;
+	if (sumReal < 0.25) return; // evaluate every quarter second
+
+	double rawRatio = sumRaw / sumReal;
+	double vanillaRatio = sumVanilla / sumRealWarped; // the vanilla delta includes timewarp, so account for that
+	sumRaw = sumVanilla = sumReal = sumRealWarped = 0.0;
+
+	bool deviating = std::fabs(vanillaRatio - 1.0) > 0.03;
+
+	// diagnostics: every window that looks off, otherwise a status line every ~5s
+	static double lastStatus = 0.0;
+	if (std::fabs(vanillaRatio - 1.0) > 0.01 || std::fabs(rawRatio - 1.0) > 0.01) {
+		log::info("[speedhack detector] vanilla ratio {:.3f}, raw ratio {:.3f}, suspended={}", vanillaRatio, rawRatio, pbSuspended);
+	}
+	else if (currentFrameTime - lastStatus > 5.0) {
+		lastStatus = currentFrameTime;
+		log::info("[speedhack detector] ok: vanilla ratio {:.3f}, raw ratio {:.3f}, suspended={}", vanillaRatio, rawRatio, pbSuspended);
+	}
+
+	static int streak = 0; // consecutive windows that disagree with the current state
+	if (deviating != pbSuspended) streak++;
+	else streak = 0;
+
+	if (streak >= (pbSuspended ? 4 : 2)) { // slower to switch back on than off
+		streak = 0;
+		pbSuspended = deviating;
+		log::info("Speedhack {} (game speed ratio {:.3f}, raw {:.3f}), physics bypass {}",
+			deviating ? "detected" : "gone", vanillaRatio, rawRatio, deviating ? "suspended" : "resumed");
+		togglePhysicsBypass(pbWanted && !pbSuspended);
+	}
 }
 
 /*
 determine the number of physics steps that happen on each frame,
 need to rewrite the vanilla formula bc otherwise you'd have to use inline assembly to get the step count
 */
-int calculateStepCount(double delta, float timewarp, bool forceVanilla, double speed = 1.0) {
+int calculateStepCount(double delta, float timewarp, bool forceVanilla) {
 	if (!physicsBypass || forceVanilla) { // vanilla 2.2
 		return std::round(std::max(1.0, ((delta * 60.0) / std::min(1.0f, timewarp)) * 4.0)); // not sure if this is different from `(delta * 240) / timewarp` bc of float precision
 	}
@@ -220,7 +261,7 @@ int calculateStepCount(double delta, float timewarp, bool forceVanilla, double s
 		return std::round(std::max(4.0, delta * 240.0) / std::min(1.0f, timewarp));
 	}
 	else { // sorta just 2.2 + physics bypass but it doesnt allow below 240 steps/sec, also it smooths things out a bit when lagging
-		double animationInterval = CCDirector::sharedDirector()->getAnimationInterval() * speed; // length of one frame in game time
+		double animationInterval = CCDirector::sharedDirector()->getAnimationInterval();
 		averageDelta = (0.05 * delta) + (0.95 * averageDelta); // exponential moving average to detect lag/external fps caps
 		if (averageDelta > animationInterval * 10) averageDelta = animationInterval * 10; // dont let averageDelta get too high
 
@@ -344,24 +385,23 @@ class $modify(GJBaseGameLayer) {
 	}
 
 	// either use the modified delta to calculate the step count, or use the actual delta if physics bypass is enabled
-	double calculateSteps(float modifiedDelta) {
+	double calculateSteps(float modifiedDelta, double rawDelta = -1.0) {
 		PlayLayer* pl = PlayLayer::get();
+		const double vanillaDelta = modifiedDelta; // before physics bypass replaces it
 		if (pl) {
 			const float timewarp = pl->m_gameState.m_timeWarp;
-			const double speed = getSpeedScale();
 
-			static double lastSpeed = 1.0;
-			if (speed != lastSpeed) { // for debugging speedhack issues
-				log::info("Speedhack scale: {}", speed);
-				lastSpeed = speed;
+			if (pbWanted && (softToggle || !firstFrame)) {
+				double realDelta = softToggle ? CCDirector::sharedDirector()->getActualDeltaTime() : currentFrameTime - lastFrameTime;
+				updateSpeedhackDetector(rawDelta, vanillaDelta, realDelta, timewarp);
 			}
 
 			if (physicsBypass) {
-				if (softToggle) modifiedDelta = CCDirector::sharedDirector()->getActualDeltaTime() * timewarp * speed;
-				else if (!firstFrame) modifiedDelta = (currentFrameTime - lastFrameTime) * timewarp * speed;
+				if (softToggle) modifiedDelta = CCDirector::sharedDirector()->getActualDeltaTime() * timewarp;
+				else if (!firstFrame) modifiedDelta = (currentFrameTime - lastFrameTime) * timewarp;
 			}
 
-			stepCount = calculateStepCount(modifiedDelta, timewarp, false, speed);
+			stepCount = calculateStepCount(modifiedDelta, timewarp, false);
 
 			if (pl->m_playerDied || GameManager::sharedState()->getEditorLayer() || softToggle) {
 				skipUpdate = true;
@@ -384,7 +424,7 @@ class $modify(GJBaseGameLayer) {
 	}
 
 	double getModifiedDelta(float delta) {
-		return calculateSteps(GJBaseGameLayer::getModifiedDelta(delta));
+		return calculateSteps(GJBaseGameLayer::getModifiedDelta(delta), delta);
 	}
 
 #ifdef GEODE_IS_MACOS
@@ -694,6 +734,7 @@ void togglePhysicsBypass(bool enable) {
 	}
 
 	physicsBypass = enable;
+	log::info("Physics bypass {}", enable ? "on" : "off");
 #endif
 }
 
@@ -773,8 +814,13 @@ $on_mod(Loaded) {
 	togglePrecisionFix(Mod::get()->getSettingValue<bool>("precision-fix"));
 	listenForSettingChanges<bool>("precision-fix", togglePrecisionFix);
 
-	togglePhysicsBypass(Mod::get()->getSettingValue<bool>("physics-bypass"));
-	listenForSettingChanges<bool>("physics-bypass", togglePhysicsBypass);
+	pbWanted = Mod::get()->getSettingValue<bool>("physics-bypass");
+	togglePhysicsBypass(pbWanted);
+	listenForSettingChanges<bool>("physics-bypass", +[](bool enable) {
+		pbWanted = enable;
+		pbSuspended = false;
+		togglePhysicsBypass(enable);
+	});
 
 	legacyBypass = Mod::get()->getSettingValue<std::string>("bypass-mode") == "2.1";
 	listenForSettingChanges<std::string>("bypass-mode", +[](std::string mode) {
