@@ -51,6 +51,7 @@ constexpr int MAX_EVENTS = 10;
 // Only give up after a long silence; the mod also restarts this program if it ever exits (error_flag == EXITED).
 constexpr int WATCHDOG_TIMEOUT_SECS = 30;
 constexpr uint32_t ERROR_FLAG_EXITED = 4;
+constexpr uint32_t ERROR_FLAG_QUIT = 5; // set by the mod when GD is closing
 
 #define INOTIFY_EVENT_SIZE  ( sizeof (struct inotify_event) )
 #define INOTIFY_BUF_LEN     ( 1024 * ( INOTIFY_EVENT_SIZE + 16 ) )
@@ -243,6 +244,12 @@ int main(int argc, char* argv[]) {
 
     while (!should_quit.load()) {
 
+        // GD is closing: the mod asks us to quit right away instead of waiting for the watchdog
+        if (shm->error_flag == ERROR_FLAG_QUIT) {
+            std::cerr << "[CBF] GD is closing, exiting" << std::endl;
+            break;
+        }
+
         // Watchdog: exit if GD stops updating the heartbeat.
         // Don't start counting until GD has incremented the heartbeat at least once,
         // since GD may take a long time to finish loading.
@@ -370,7 +377,7 @@ int main(int argc, char* argv[]) {
     close(epoll_fd);
     inotify_rm_watch(inotify_fd, inotify_watch);
     close(inotify_fd);
-    shm->error_flag = ERROR_FLAG_EXITED; // tell the mod it should start a new instance of this program
+    if (shm->error_flag != ERROR_FLAG_QUIT) shm->error_flag = ERROR_FLAG_EXITED; // tell the mod it should start a new instance of this program
     munmap(shm, sizeof(SharedMemory));
     unlink(shm_path.c_str());
 

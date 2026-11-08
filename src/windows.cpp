@@ -71,8 +71,14 @@ static void flushPendingReleases(double now) {
 }
 
 constexpr uint32_t ERROR_FLAG_EXITED = 4; // set by linux-input when it quits (watchdog, signal, read error)
+constexpr uint32_t ERROR_FLAG_QUIT = 5;   // set by us when GD is closing, tells linux-input to quit
 
 static bool startLinuxHelper();
+
+// GD is closing: tell linux-input to exit now instead of waiting for its watchdog
+void linuxShutdown() {
+	if (pSharedMem) pSharedMem->error_flag = ERROR_FLAG_QUIT;
+}
 
 void linuxHeartbeat() {
 	if (!pSharedMem) return;

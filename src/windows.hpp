@@ -28,3 +28,4 @@ void windowsSetup();
 void linuxCheckInputs();
 void linuxHeartbeat();
 void linuxResetKeyState();
+void linuxShutdown();

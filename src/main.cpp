@@ -9,6 +9,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
+#include <Geode/loader/GameEvent.hpp>
 #include <Geode/modify/GJGameLevel.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <tulip/TulipHook.hpp>
@@ -196,6 +197,7 @@ double averageDelta = 0.0;
 
 bool physicsBypass;  // physics bypass is currently active
 bool legacyBypass;
+bool speedhackCompat = true; // the "Speedhack Compatibility" setting
 bool pbWanted = false;     // what the "Enable Physics Bypass" setting says
 bool pbSuspended = false;  // true while physics bypass is switched off because a speedhack was detected
 
@@ -211,7 +213,7 @@ They only disagree when something scales the game's time. Needs a few consistent
 so single lag spikes don't trigger it.
 */
 void updateSpeedhackDetector(double raw, double vanilla, double real, float timewarp) {
-	if (!pbWanted || real <= 0.0) return;
+	if (!pbWanted || !speedhackCompat || real <= 0.0) return;
 
 	static double sumRaw = 0.0, sumVanilla = 0.0, sumReal = 0.0, sumRealWarped = 0.0;
 	sumRaw += raw > 0.0 ? raw : real;
@@ -805,6 +807,13 @@ class $modify(CBFPauseLayer, PauseLayer) {
 	}
 };
 
+#ifdef GEODE_IS_WINDOWS
+// the game is closing: stop the Linux input program right away
+$on_game(Exiting) {
+	if (linuxNative) linuxShutdown();
+}
+#endif
+
 $on_mod(Loaded) {
 	Mod::get()->setSavedValue<bool>("is-linux", false);
 
@@ -843,6 +852,15 @@ $on_mod(Loaded) {
 	});
 
 #ifdef GEODE_IS_WINDOWS
+	speedhackCompat = Mod::get()->getSettingValue<bool>("speedhack-compat");
+	listenForSettingChanges<bool>("speedhack-compat", +[](bool enable) {
+		speedhackCompat = enable;
+		if (!enable && pbSuspended) { // turned off while suspended: bring physics bypass back
+			pbSuspended = false;
+			togglePhysicsBypass(pbWanted);
+		}
+	});
+
 	socdFix = Mod::get()->getSettingValue<bool>("socd-fix");
 	listenForSettingChanges<bool>("socd-fix", +[](bool enable) {
 		socdFix = enable;
