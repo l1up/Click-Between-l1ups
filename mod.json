@@ -6,11 +6,11 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v1.3.0",
+	"version": "v1.3.1",
 	"id": "l1up.click_between_l1ups",
 	"name": "Click Between l1ups",
 	"developer": "l1up",
-	"description": "Allows inputs to register between frames.",
+	"description": "Allows inputs to register between frames with some extra flair.",
 	"incompatibilities": {
 		"zmx.cbf-lite": ">=1.0.0",
 		"syzzi.click_between_frames": ">=1.0.0"
@@ -69,7 +69,7 @@
 		},
 		"physics-bypass": {
 			"name": "Enable Physics Bypass",
-			"description": "Reduces stuttering on some FPS values. Active even if \"Disable CBF\" is checked.\n\nTHIS WILL ALTER PHYSICS AND MAY BREAK SOME LEVELS! DON'T USE THIS IF YOUR LIST/LEADERBOARD BANS PHYSICS BYPASS!",
+			"description": "Reduces stuttering on some FPS values. \nTHIS WILL ALTER PHYSICS AND MAY BREAK SOME LEVELS! DON'T USE THIS IF YOUR LIST/LEADERBOARD BANS PHYSICS BYPASS!",
 			"type": "bool",
 			"default": false,
 			"platforms": ["win"]
@@ -106,7 +106,7 @@
 		},
 		"socd-fix": {
 			"name": "SOCD Compatibility",
-			"description": "Fixes lost clicks on keyboards with SOCD cleaning (e.g. last-input-priority) when two keys are bound to the same action. Holds back key releases for ~2ms and ignores a release that is immediately followed by a press of the same action.",
+			"description": "Fixes lost clicks on keyboards with SOCD cleaning (e.g. last-input-priority) when two keys are bound to the same action. Holds back key releases for ~2ms and ignores a release that is immediately followed by a press of the same action. \n THIS TECHNICALLY IS CHEATING SOOOO",
 			"type": "bool",
 			"default": true,
 			"enable-if": "saved:you-must-be-on-linux-to-change-this && wine-workaround",
@@ -122,7 +122,7 @@
 		}
 	},
 	"links": {
-		"source": "https://github.com/theyareonit/Click-Between-Frames"
+		"source": "https://github.com/l1up/Click-Between-l1ups"
 	},
 	"resources": {
 		"files": [
