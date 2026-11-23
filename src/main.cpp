@@ -202,6 +202,7 @@ bool pbWanted = false;     // what the "Enable Physics Bypass" setting says
 bool pbSuspended = false;  // true while physics bypass is switched off because a speedhack was detected
 
 void togglePhysicsBypass(bool enable);
+void updatePhysicsBypass();
 
 /*
 Physics bypass replaces the game's delta with the real time between frames, which throws away the speed set by
@@ -247,7 +248,7 @@ void updateSpeedhackDetector(double raw, double vanilla, double real, float time
 		pbSuspended = deviating;
 		log::info("Speedhack {} (game speed ratio {:.3f}, raw {:.3f}), physics bypass {}",
 			deviating ? "detected" : "gone", vanillaRatio, rawRatio, deviating ? "suspended" : "resumed");
-		togglePhysicsBypass(pbWanted && !pbSuspended);
+		updatePhysicsBypass();
 	}
 }
 
@@ -393,15 +394,12 @@ class $modify(GJBaseGameLayer) {
 		if (pl) {
 			const float timewarp = pl->m_gameState.m_timeWarp;
 
-			if (pbWanted && (softToggle || !firstFrame)) {
-				double realDelta = softToggle ? CCDirector::sharedDirector()->getActualDeltaTime() : currentFrameTime - lastFrameTime;
-				updateSpeedhackDetector(rawDelta, vanillaDelta, realDelta, timewarp);
+			if (pbWanted && !softToggle && !firstFrame) {
+				updateSpeedhackDetector(rawDelta, vanillaDelta, currentFrameTime - lastFrameTime, timewarp);
 			}
 
-			if (physicsBypass) {
-				if (softToggle) modifiedDelta = CCDirector::sharedDirector()->getActualDeltaTime() * timewarp;
-				else if (!firstFrame) modifiedDelta = (currentFrameTime - lastFrameTime) * timewarp;
-			}
+			// physics bypass is never active while the mod is soft disabled (see updatePhysicsBypass)
+			if (physicsBypass && !firstFrame) modifiedDelta = (currentFrameTime - lastFrameTime) * timewarp;
 
 			stepCount = calculateStepCount(modifiedDelta, timewarp, false);
 
@@ -740,6 +738,14 @@ void togglePhysicsBypass(bool enable) {
 #endif
 }
 
+/*
+physics bypass is only active when it's enabled in the settings, the mod isn't soft disabled,
+and no speedhack is in the way (see updateSpeedhackDetector)
+*/
+void updatePhysicsBypass() {
+	togglePhysicsBypass(pbWanted && !pbSuspended && !softToggle);
+}
+
 void toggleMod(bool disable) {
 #if defined(GEODE_IS_WINDOWS)
 	void* addr = reinterpret_cast<void*>(geode::base::get() + 0x622bd0);
@@ -755,6 +761,7 @@ void toggleMod(bool disable) {
 #endif
 
 	softToggle = disable;
+	updatePhysicsBypass();
 
 	// for mod menus that let you toggle cbf mid-attempt
 	PlayLayer* pl = PlayLayer::get();
@@ -824,11 +831,11 @@ $on_mod(Loaded) {
 	listenForSettingChanges<bool>("precision-fix", togglePrecisionFix);
 
 	pbWanted = Mod::get()->getSettingValue<bool>("physics-bypass");
-	togglePhysicsBypass(pbWanted);
+	updatePhysicsBypass();
 	listenForSettingChanges<bool>("physics-bypass", +[](bool enable) {
 		pbWanted = enable;
 		pbSuspended = false;
-		togglePhysicsBypass(enable);
+		updatePhysicsBypass();
 	});
 
 	legacyBypass = Mod::get()->getSettingValue<std::string>("bypass-mode") == "2.1";
@@ -857,7 +864,7 @@ $on_mod(Loaded) {
 		speedhackCompat = enable;
 		if (!enable && pbSuspended) { // turned off while suspended: bring physics bypass back
 			pbSuspended = false;
-			togglePhysicsBypass(pbWanted);
+			updatePhysicsBypass();
 		}
 	});
 
